@@ -1,0 +1,191 @@
+TUTORIAL COMPLETO — COMO CONFIGURAR E USAR O LFS-AUTOMATOR.SH
+=============================================================
+
+Este guia explica passo a passo como preparar o ambiente, configurar variáveis e usar o lfs-automator.sh, que automatiza a maior parte do processo do Linux From Scratch (LFS).
+Observação: o script NÃO cria, formata ou monta partições. Isso deve ser feito por você antes.
+
+----------------------------------------------------------------------
+1) PRÉ-REQUISITOS DO SISTEMA HOST
+----------------------------------------------------------------------
+
+Você precisa de um sistema Linux funcional (x86_64) com:
+- Kernel 4.x ou mais recente.
+- Ferramentas instaladas: gcc, g++, make, tar, xz, bzip2, gzip, patch, sed, awk, python3,
+  wget ou curl, sha256sum, chown, chgrp, mount, chroot, sudo.
+
+Exemplos de instalação:
+
+Debian/Ubuntu:
+  sudo apt update
+  sudo apt install build-essential wget curl python3 tar xz-utils bzip2 gzip patch gawk make sudo
+
+Fedora/RHEL:
+  sudo dnf groupinstall "Development Tools"
+  sudo dnf install wget curl python3 tar xz bzip2 gzip patch gawk make sudo
+
+----------------------------------------------------------------------
+2) PREPARAR A PARTIÇÃO PARA O LFS
+----------------------------------------------------------------------
+
+1. Crie uma partição dedicada (20–50 GB recomendados).
+2. Formate (exemplo com ext4):
+     sudo mkfs.ext4 /dev/sdXn
+3. Monte em /mnt/lfs (ou outro caminho):
+     sudo mkdir -pv /mnt/lfs
+     sudo mount /dev/sdXn /mnt/lfs
+
+Substitua /dev/sdXn pelo seu dispositivo real.
+
+----------------------------------------------------------------------
+3) OBTER O SCRIPT LFS-AUTOMATOR.SH
+----------------------------------------------------------------------
+
+- Salve o arquivo lfs-automator.sh (o conteúdo do script deve estar exatamente como fornecido).
+- Dê permissão de execução:
+    chmod +x lfs-automator.sh
+
+----------------------------------------------------------------------
+4) VARIÁVEIS DE AMBIENTE IMPORTANTES
+----------------------------------------------------------------------
+
+O lfs-automator.sh usa variáveis para personalizar a compilação:
+
+- LFS        -> caminho montado do LFS (ex.: /mnt/lfs). OBRIGATÓRIO.
+- INIT       -> tipo de init:
+                sysv  (padrão)
+                systemd
+- LIB        -> variante de bibliotecas:
+                pure64  (padrão)
+                multilib (experimental)
+- LFS_USER   -> usuário auxiliar para compilar a toolchain (padrão: lfs).
+- JOBS       -> número de tarefas paralelas do make (auto detecta via nproc).
+- SRC_MIRROR -> URL base alternativa para baixar fontes (opcional).
+- BOOK_VER   -> rótulo informativo da versão do livro (opcional; não trava nada).
+
+Exemplo de exportação manual:
+  export LFS=/mnt/lfs
+  export INIT=systemd
+  export LIB=pure64
+  export JOBS=8
+
+Você também pode passar VAR=valor diretamente na chamada do script (ex.: sudo -E sh lfs-automator.sh INIT=sysv LIB=pure64).
+
+----------------------------------------------------------------------
+5) EXECUTANDO O SCRIPT
+----------------------------------------------------------------------
+
+IMPORTANTE: Rode como root. Use sudo -E para preservar as variáveis exportadas.
+
+5.1) Execução completa (toolchain -> chroot -> base -> kernel)
+  sudo -E ./lfs-automator.sh run
+ou simplesmente:
+  sudo -E ./lfs-automator.sh
+
+5.2) Somente preparar estrutura e baixar fontes
+  sudo -E ./lfs-automator.sh fetch
+
+5.3) Entrar no chroot manualmente
+  sudo -E ./lfs-automator.sh chroot
+
+Dicas:
+- Certifique-se de ter definido LFS antes (ex.: export LFS=/mnt/lfs).
+- O script criará diretórios, baixará pacotes/patches, validará checksums (quando informados),
+  construirá a toolchain em $LFS/tools e, depois, entrará em chroot para montar o sistema base.
+
+----------------------------------------------------------------------
+6) ESTRUTURA CRIADA NO DIRETÓRIO $LFS
+----------------------------------------------------------------------
+
+- /sources   -> pacotes e patches baixados.
+- /tools     -> toolchain temporária usada para compilar o resto.
+- /build     -> área de construção intermediária e scripts auxiliares.
+- /logs      -> registros de compilação (se você decidir salvá-los lá).
+- /manifests -> listas de pacotes/URLs/SHA/patches (arquivos CSV e ordem de build).
+
+----------------------------------------------------------------------
+7) FLUXO DE CONSTRUÇÃO (RESUMO)
+----------------------------------------------------------------------
+
+1. Preparação: layout e download dos fontes/patches (manifests).
+2. Toolchain (passes 1 e 2): Binutils, GCC, Linux headers, Glibc, libstdc++.
+3. Chroot: entra no ambiente novo e constrói pacotes base (file, ncurses, bash, coreutils etc.).
+4. Init:
+   - INIT=sysv    -> instala sysvinit e scripts relacionados.
+   - INIT=systemd -> instala systemd e configurações relacionadas.
+5. Kernel: compila e instala o kernel Linux dentro do chroot (bzImage, System.map, config).
+
+Observação: As “receitas” de compilação no script são POSIX e podem ser simplificadas. Em
+alguns pacotes será necessário ajustar flags conforme a versão específica do livro.
+
+----------------------------------------------------------------------
+8) MULTILIB (OPCIONAL, EXPERIMENTAL)
+----------------------------------------------------------------------
+
+Defina LIB=multilib se desejar suporte 32-bit + 64-bit no mesmo sistema.
+Nota: Esta opção é experimental no script. Implementar multilib corretamente exige:
+- Recompilar binutils/gcc/glibc com targets 32-bit (i686) adicionais;
+- Configurar diretórios /lib e /lib32, links simbólicos e ld.so adequadamente;
+- Ajustar CFLAGS/ABI e testar cuidadosamente.
+
+Use apenas se você souber exatamente o que está fazendo e estiver disposto a adaptar as receitas.
+
+----------------------------------------------------------------------
+9) FINALIZANDO O SISTEMA LFS
+----------------------------------------------------------------------
+
+Após a execução, seu sistema base estará em $LFS. Para inicializar via bootloader:
+
+1. Edite /etc/fstab dentro do chroot ($LFS):
+   Exemplo básico (ajuste UUID/dispositivo, tipos e opções conforme seu setup):
+     UUID=SEU-UUID   /       ext4   defaults     1 1
+     proc            /proc   proc   nosuid,noexec,nodev  0 0
+     sysfs           /sys    sysfs  nosuid,noexec,nodev  0 0
+     devpts          /dev/pts devpts gid=5,mode=620      0 0
+     tmpfs           /run    tmpfs  defaults             0 0
+     devtmpfs        /dev    devtmpfs mode=0755,nosuid   0 0
+
+2. Instale e configure o bootloader (ex.: GRUB) de dentro do chroot:
+     grub-install /dev/sdX
+     grub-mkconfig -o /boot/grub/grub.cfg
+   Substitua /dev/sdX pelo seu disco (sem o número da partição).
+
+3. Remonte e reinicie apontando o boot para a partição do LFS.
+
+----------------------------------------------------------------------
+10) RESUMO RÁPIDO DE COMANDOS
+----------------------------------------------------------------------
+
+Preparar partição:
+  sudo mkfs.ext4 /dev/sdXn
+  sudo mkdir -pv /mnt/lfs
+  sudo mount /dev/sdXn /mnt/lfs
+
+Definir variáveis:
+  export LFS=/mnt/lfs
+  export INIT=sysv     # ou systemd
+  export LIB=pure64    # ou multilib
+  export JOBS=$(nproc) # opcional
+
+Rodar tudo:
+  sudo -E ./lfs-automator.sh run
+
+Somente baixar fontes:
+  sudo -E ./lfs-automator.sh fetch
+
+Entrar no chroot:
+  sudo -E ./lfs-automator.sh chroot
+
+----------------------------------------------------------------------
+11) AVISOS E BOAS PRÁTICAS
+----------------------------------------------------------------------
+
+- Leia o Linux From Scratch Book em paralelo (https://www.linuxfromscratch.org/lfs/).
+- Os manifests do script trazem um conjunto mínimo de pacotes e alguns “SKIP” em SHA.
+  Para máxima reprodutibilidade, substitua SKIP pelos SHA256 corretos das versões que você
+  fixar no seu ambiente.
+- As versões de pacotes mudam com o tempo. Se um fonte ficar indisponível, ajuste a URL
+  ou use SRC_MIRROR apontando para um espelho confiável.
+- Multilib é avançado: teste em VM e faça snapshots antes de mudanças grandes.
+- Sempre rode como root (sudo -E) e garanta que $LFS está montado antes de iniciar.
+
+FIM DO TUTORIAL.
